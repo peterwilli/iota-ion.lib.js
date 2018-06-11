@@ -25,6 +25,18 @@ export default class ION {
     return this.addr
   }
 
+  async getBundle(tailTx) {
+    return new Promise(function(resolve, reject) {
+      iota.api.getBundle(tailTx, (e, r) => {
+        if (e) {
+          reject(e)
+        } else {
+          resolve(r)
+        }
+      })
+    })
+  }
+
   async findTransactionObjects(searchValues) {
     return new Promise(function(resolve, reject) {
       iota.api.findTransactionObjects(searchValues, (e, r) => {
@@ -70,7 +82,7 @@ export default class ION {
     })
   }
 
-  async waitForAnswer() {
+  async waitForBundle() {
     var searchValues = {
       addresses: [this.addr]
     }
@@ -81,7 +93,11 @@ export default class ION {
         for (var tx of txs) {
           if (!_this.txsScanned[tx.hash]) {
             _this.txsScanned[tx.hash] = true
-            return resolve(tx)
+            searchValues = {
+              bundles: [tx.bundle]
+            }
+            var bundle = await _this.getBundle(tx.hash)
+            return resolve(bundle)
           }
         }
         setTimeout(fn, 3000)
@@ -111,17 +127,9 @@ export default class ION {
     return trytes
   }
 
-  processTx(tx) {
+  processBundle(bundle) {
+    console.log('processBundle', bundle);
     var frag = tx.signatureMessageFragment
-    var msg = iota.utils.fromTrytes(frag)
-    if(msg.indexOf("start:") === 0) {
-      // Start message
-      this.serialTxCache[msg.tag] = {
-        expect: parseInt(msg.split(":")[1]),
-        cache: []
-      }
-      return;
-    }
     var signal = null
     var curCache = this.serialTxCache[msg.tag]
     try {
@@ -169,9 +177,9 @@ export default class ION {
     var _this = this
     var p = this.peer
     var checkAnswer = () => {
-      _this.waitForAnswer().then((newTx) => {
-        if (newTx.tag.indexOf(_this.myTag) !== 0) {
-          _this.processTx(newTx)
+      _this.waitForBundle().then((bundle) => {
+        if (bundle.tag.indexOf(_this.myTag) !== 0) {
+          _this.processBundle(bundle)
         }
         setTimeout(checkAnswer, 500)
       })
@@ -180,24 +188,13 @@ export default class ION {
     var seed = tryteGen(this.prefix, nanoid(128))
     p.on('signal', function(data) {
       var signalEncrypted = _this.encrypt(JSON.stringify(data))
-      var encryptedMessage = iota.utils.toTrytes(atob(signalEncrypted))
-      var transfers = []
-      const maxMsgLen = 2187;
-      const amountOfTxs = Math.ceil(encryptedMessage.length / maxMsgLen);
-      transfers.push({
+      var encryptedMessage = iota.utils.toTrytes(JSON.stringify({ enc: atob(signalEncrypted) }))
+      var transfers = [{
         tag: _this.myTag,
         address: _this.addr,
         value: 0,
-        message: iota.utils.toTrytes("start:" + amountOfTxs)
-      })
-      for (var i = 0; i < amountOfTxs; i++) {
-        transfers.push({
-          tag: _this.myTag,
-          address: _this.addr,
-          value: 0,
-          message: encryptedMessage.substring(i * maxMsgLen, Math.min(encryptedMessage.length, ((i + 1) * maxMsgLen)))
-        })
-      }
+        message: encryptedMessage
+      }]
       console.log(`Sending ${transfers.length} transfers...`);
       iota.api.sendTransfer(seed, _this.depth, _this.minWeightMagnitude, transfers, (e, r) => {
         console.log('sent transfer', data, e, r);
