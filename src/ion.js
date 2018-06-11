@@ -15,6 +15,7 @@ export default class ION {
     this.depth = 5
     this.txsScanned = {}
     this.events = new EventEmitter()
+    this.serialTxCache = {}
   }
 
   generateAddress() {
@@ -54,9 +55,9 @@ export default class ION {
       reconnectTimer: 5000,
       config: {
         iceServers: [{
-          urls: 'stun:stun2.l.google.com:19302'
+          urls: 'stun:stun1.l.google.com:19302'
         }, {
-          urls: 'stun:stun3.l.google.com:19302'
+          urls: 'stun:stun2.l.google.com:19302'
         }, {
           urls: 'stun:stun3.l.google.com:19302'
         }]
@@ -112,10 +113,23 @@ export default class ION {
 
   processTx(tx) {
     var frag = tx.signatureMessageFragment
-    var msg = iota.utils.fromTrytes(frag.substring(0, frag.lastIndexOf("E")))
+    var msg = iota.utils.fromTrytes(frag)
+    if(msg.indexOf("start:") === 0) {
+      // Start message
+      this.serialTxCache[msg.tag] = {
+        expect: parseInt(msg.split(":")[1]),
+        cache: []
+      }
+      return;
+    }
     var signal = null
+    var curCache = this.serialTxCache[msg.tag]
     try {
-      signal = JSON.parse(this.decrypt(btoa(msg)))
+      curCache.cache.push(msg)
+      if(curCache.cache.length === curCache.expect) {
+        // unwrap cache
+        var totalMsg
+      }
     } catch (e) {
       window.IONDebug = {
         decrypt: this.decrypt
@@ -163,15 +177,28 @@ export default class ION {
       })
     }
     checkAnswer()
+    var seed = tryteGen(this.prefix, nanoid(128))
     p.on('signal', function(data) {
       var signalEncrypted = _this.encrypt(JSON.stringify(data))
-      var seed = tryteGen(this.prefix, nanoid(128))
-      var transfers = [{
+      var encryptedMessage = iota.utils.toTrytes(atob(signalEncrypted))
+      var transfers = []
+      const maxMsgLen = 2187;
+      const amountOfTxs = Math.ceil(encryptedMessage.length / maxMsgLen);
+      transfers.push({
         tag: _this.myTag,
         address: _this.addr,
         value: 0,
-        message: iota.utils.toTrytes(atob(signalEncrypted)) + "E"
-      }]
+        message: iota.utils.toTrytes("start:" + amountOfTxs)
+      })
+      for (var i = 0; i < amountOfTxs; i++) {
+        transfers.push({
+          tag: _this.myTag,
+          address: _this.addr,
+          value: 0,
+          message: encryptedMessage.substring(i * maxMsgLen, Math.min(encryptedMessage.length, ((i + 1) * maxMsgLen)))
+        })
+      }
+      console.log(`Sending ${transfers.length} transfers...`);
       iota.api.sendTransfer(seed, _this.depth, _this.minWeightMagnitude, transfers, (e, r) => {
         console.log('sent transfer', data, e, r);
       })
