@@ -16,6 +16,13 @@ export default class ION {
     this.txsScanned = {}
     this.events = new EventEmitter()
     this.serialTxCache = {}
+    this.connected = false
+    this.checkCurrentAddressTimer = null,
+    this.tickets = []
+    this.peer = null
+    this.waitingForTicket = true
+    this.dataCache = []
+    this.startRetrieving = false
   }
 
   generateAddress() {
@@ -57,13 +64,23 @@ export default class ION {
     return CryptoJS.AES.decrypt(msg, this.encryptionKey).toString(CryptoJS.enc.Utf8)
   }
 
+  async stopPeer() {
+    if (this.peer !== null) {
+      this.peer.destroy()
+      this.peer = null
+    }
+  }
+
   async startPeer(options) {
-    var {
-      initiator
-    } = options
+    var defaultOptions = {
+      initiator: false
+    }
+    options = Object.assign(defaultOptions, options)
+    var { initiator } = options
+    console.log('startPeer, initiator:', initiator);
     var p = new Peer({
       initiator,
-      trickle: false,
+      trickle: true,
       reconnectTimer: 5000,
       config: {
         iceServers: [{
@@ -75,11 +92,19 @@ export default class ION {
         }]
       }
     })
-    this.peer = p
-    this.events.emit('peer-added')
+    p.on('connect', this.handleConnect.bind(this));
+    p.on('data', this.handleData.bind(this));
+
+    var _this = this;
+    p.on('signal', (signal) => {
+      _this.handleSignal(signal).then((e, r) => {
+        console.log('p => Signal', e, r);
+      });
+    });
     p.on('error', function(err) {
       console.error('peer error', err)
     })
+    this.peer = p
   }
 
   async waitForBundle() {
@@ -92,12 +117,12 @@ export default class ION {
         var txs = await _this.findTransactionObjects(searchValues)
         for (var tx of txs) {
           if (!_this.txsScanned[tx.hash]) {
-            _this.txsScanned[tx.hash] = true
-            searchValues = {
-              bundles: [tx.bundle]
+            if (tx.currentIndex === 0) {
+              var bundle = await _this.getBundle(tx.hash)
+              if (bundle != null) {
+                return resolve(bundle)
+              }
             }
-            var bundle = await _this.getBundle(tx.hash)
-            return resolve(bundle)
           }
         }
         setTimeout(fn, 3000)
@@ -127,78 +152,164 @@ export default class ION {
     return trytes
   }
 
-  processBundle(bundle) {
-    console.log('processBundle', bundle);
-    var frag = tx.signatureMessageFragment
-    var signal = null
-    var curCache = this.serialTxCache[msg.tag]
-    try {
-      curCache.cache.push(msg)
-      if(curCache.cache.length === curCache.expect) {
-        // unwrap cache
-        var totalMsg
+  async processBundle(bundle) {
+    var json = JSON.parse(iota.utils.extractJson(bundle))
+    if (bundle[0].tag.indexOf(this.myTag) === 0) {
+      return true;
+    }
+    console.log('processBundle > bundle', bundle, JSON.stringify(json));
+    if (json.enc) {
+      if(this.peer !== null && !this.waitingForTicket) {
+        console.log('processBundle > json', json);
+        var signal = this.decrypt(json.enc)
+        console.log('processBundle > signal', signal);
+        if (signal !== null) {
+          this.peer.signal(signal)
+        }
+        return true;
       }
-    } catch (e) {
-      window.IONDebug = {
-        decrypt: this.decrypt
+      else {
+        return false;
       }
-      console.error('Error parsing this message:', msg, frag)
-    } finally {
-      if (signal !== null) {
-        console.log('processTx > signal', signal);
-        this.peer.signal(signal)
+    } else if (json.ticket) {
+      this.tickets.push(json)
+      console.log('this.tickets.length', this.tickets.length);
+      if (this.tickets.length === 2) {
+        this.waitingForTicket = false;
+        await this.processTickets();
+      }
+    }
+    return true;
+  }
+
+  async processTickets() {
+    var tags = this.tickets.map((o) => {
+      return o.tag;
+    }).sort();
+
+    var initiator = this.tickets.map((o) => {
+      return o.ticket;
+    }).reduce((acc, val) => {
+      return acc + val;
+    }) % tags.length;
+
+    this.isInitiator = tags[initiator] === this.myTag;
+    await this.startPeer({ initiator: this.isInitiator })
+  }
+
+  handleData(data) {
+    if(this.startRetrieving) {
+      this.events.emit('data', data);
+    }
+    else {
+      this.dataCache.push(data)
+    }
+  }
+
+  async handleSignal(data) {
+    console.log('handleSignal', JSON.stringify(data));
+    var signalEncrypted = this.encrypt(JSON.stringify(data))
+    var encryptedMessage = iota.utils.toTrytes(JSON.stringify({
+      enc: signalEncrypted
+    }))
+    var transfers = [{
+      tag: this.myTag,
+      address: this.addr,
+      value: 0,
+      message: encryptedMessage
+    }]
+    await this.sendTransfers(transfers);
+  }
+
+  async sendTransfers(transfers) {
+    console.log('sendTransfer, transfers:', JSON.stringify(transfers));
+    var seed = tryteGen(this.prefix, nanoid(128))
+    var _this = this
+    return new Promise(function(resolve, reject) {
+      iota.api.sendTransfer(seed, _this.depth, _this.minWeightMagnitude, transfers, (e, r) => {
+        if (e) {
+          reject(e);
+        } else {
+          resolve(r);
+        }
+      });
+    });
+  }
+
+  flushCachedData() {
+    if(this.dataCache.length > 0) {
+      for(var data of this.dataCache) {
+        this.events.emit('data', data);
+      }
+      this.dataCache.length = 0
+    }
+  }
+
+  handleConnect() {
+    this.connected = true;
+    this.events.emit('connect');
+  }
+
+  send(msg) {
+    this.peer.send(msg);
+  }
+
+  async checkCurrentAddress() {
+    if (!this.connected) {
+      // Check if new address is available
+      if (this.addr !== this.generateAddress()) {
+        console.warn('No connection yet, and we moved to a new address, reset and reconnect');
+        location.reload();
       }
     }
   }
 
-  async connect(options) {
+  async reset() {
+    this.addr = null
+    if (this.peer !== null) {
+      this.peer.destroy()
+      this.peer = null
+    }
+    await this.connect()
+  }
+
+  async connect() {
     if (!this.addr) {
       this.generateAddress()
       console.log(`Using address: ${this.addr}`);
     }
-
-    var searchValues = {
-      addresses: [this.addr]
+    this.checkCurrentAddressTimer = setInterval(this.checkCurrentAddress.bind(this), 1000)
+    var ticketJson = {
+      tag: this.myTag,
+      ticket: Math.round(Math.random() * 9999)
     }
-    var txs = await this.findTransactionObjects(searchValues)
-    // for(var tx of txs) {
-    //   if(tx.tag.indexOf(this.myTag) === 0) {
-    //     // If myself appears in any tx, we know 100% we already had this channel.
-    //     // We increase the trytes by 1 so we can try again in a (hopefully clean) environment.
-    //     console.warn(`Address ${this.addr} is tainted, shifting to ${this.increaseTryte(this.addr)}`);
-    //     this.addr = this.increaseTryte(this.addr)
-    //     return await this.connect(options)
-    //   }
-    // }
-    this.startPeer({
-      initiator: txs.length === 0
-    })
-
+    this.tickets.push(ticketJson)
+    var ticketMessage = iota.utils.toTrytes(JSON.stringify(ticketJson))
+    var transfers = [{
+      tag: this.myTag,
+      address: this.addr,
+      value: 0,
+      message: ticketMessage
+    }]
+    await this.sendTransfers(transfers)
     var _this = this
-    var p = this.peer
     var checkAnswer = () => {
-      _this.waitForBundle().then((bundle) => {
-        if (bundle.tag.indexOf(_this.myTag) !== 0) {
-          _this.processBundle(bundle)
+      _this.waitForBundle().then(async (bundle) => {
+        if(bundle !== null) {
+          var ret = await _this.processBundle(bundle)
+          if(ret) {
+            for(var b of bundle) {
+              _this.txsScanned[b.hash] = true
+              if(this.checkCurrentAddressTimer !== null) {
+                clearInterval(this.checkCurrentAddressTimer)
+                this.checkCurrentAddressTimer = null;
+              }
+            }
+          }
         }
         setTimeout(checkAnswer, 500)
       })
     }
     checkAnswer()
-    var seed = tryteGen(this.prefix, nanoid(128))
-    p.on('signal', function(data) {
-      var signalEncrypted = _this.encrypt(JSON.stringify(data))
-      var encryptedMessage = iota.utils.toTrytes(JSON.stringify({ enc: atob(signalEncrypted) }))
-      var transfers = [{
-        tag: _this.myTag,
-        address: _this.addr,
-        value: 0,
-        message: encryptedMessage
-      }]
-      console.log(`Sending ${transfers.length} transfers...`);
-      iota.api.sendTransfer(seed, _this.depth, _this.minWeightMagnitude, transfers, (e, r) => {
-        console.log('sent transfer', data, e, r);
-      })
-    })
   }
 }
