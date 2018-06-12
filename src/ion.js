@@ -80,7 +80,7 @@ export default class ION {
     console.log('startPeer, initiator:', initiator);
     var p = new Peer({
       initiator,
-      trickle: true,
+      trickle: false,
       reconnectTimer: 5000,
       config: {
         iceServers: [{
@@ -175,8 +175,15 @@ export default class ION {
       this.tickets.push(json)
       console.log('this.tickets.length', this.tickets.length);
       if (this.tickets.length === 2) {
+        if(this.checkCurrentAddressTimer !== null) {
+          clearInterval(this.checkCurrentAddressTimer)
+          this.checkCurrentAddressTimer = null;
+        }
         this.waitingForTicket = false;
         await this.processTickets();
+      }
+      else if(this.tickets.length > 2) {
+        this.reset();
       }
     }
     return true;
@@ -259,7 +266,7 @@ export default class ION {
       // Check if new address is available
       if (this.addr !== this.generateAddress()) {
         console.warn('No connection yet, and we moved to a new address, reset and reconnect');
-        location.reload();
+        this.reset();
       }
     }
   }
@@ -300,10 +307,6 @@ export default class ION {
           if(ret) {
             for(var b of bundle) {
               _this.txsScanned[b.hash] = true
-              if(this.checkCurrentAddressTimer !== null) {
-                clearInterval(this.checkCurrentAddressTimer)
-                this.checkCurrentAddressTimer = null;
-              }
             }
           }
         }
