@@ -1,3 +1,1 @@
-import ION from './ion'
-
-export default ION
+module.exports = require('./ion').default

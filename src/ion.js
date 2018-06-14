@@ -1,13 +1,13 @@
 var Peer = require('simple-peer')
 var CryptoJS = require("crypto-js")
-import iota from './iota.js'
 import tryteGen from './utils/tryteGen.js'
 import tempKey from './utils/temp-key'
 const nanoid = require('nanoid')
 var EventEmitter = require('eventemitter3')
 
-export default class ION {
-  constructor(prefix, encryptionKey, myTag) {
+class ION {
+  constructor(iota, prefix, encryptionKey, myTag) {
+    this.iota = iota
     this.myTag = myTag
     this.prefix = prefix
     this.encryptionKey = encryptionKey
@@ -26,6 +26,7 @@ export default class ION {
   }
 
   generateAddress() {
+    var iota = this.iota
     var iotaSeed = tryteGen(this.prefix, tempKey(this.prefix, this.encryptionKey))
     var addr = iota.utils.addChecksum(iotaSeed)
     this.addr = iotaSeed
@@ -33,6 +34,7 @@ export default class ION {
   }
 
   async getBundle(tailTx) {
+    var iota = this.iota
     return new Promise(function(resolve, reject) {
       iota.api.getBundle(tailTx, (e, r) => {
         if (e) {
@@ -45,6 +47,7 @@ export default class ION {
   }
 
   async findTransactionObjects(searchValues) {
+    var iota = this.iota
     return new Promise(function(resolve, reject) {
       iota.api.findTransactionObjects(searchValues, (e, r) => {
         if (e) {
@@ -84,6 +87,12 @@ export default class ION {
       reconnectTimer: 5000,
       config: {
         iceServers: [{
+          urls: 'stun:stun.ekiga.net'
+        }, {
+          urls: 'stun:stun.iptel.org'
+        }, {
+          urls: 'stun:stun.softjoys.com'
+        }, {
           urls: 'stun:stun1.l.google.com:19302'
         }, {
           urls: 'stun:stun2.l.google.com:19302'
@@ -153,6 +162,7 @@ export default class ION {
   }
 
   async processBundle(bundle) {
+    var iota = this.iota
     var json = JSON.parse(iota.utils.extractJson(bundle))
     if (bundle[0].tag.indexOf(this.myTag) === 0) {
       return true;
@@ -205,6 +215,7 @@ export default class ION {
   }
 
   handleData(data) {
+    data = data + ""
     if(this.startRetrieving) {
       this.events.emit('data', data);
     }
@@ -216,6 +227,7 @@ export default class ION {
   async handleSignal(data) {
     console.log('handleSignal', JSON.stringify(data));
     var signalEncrypted = this.encrypt(JSON.stringify(data))
+    var iota = this.iota
     var encryptedMessage = iota.utils.toTrytes(JSON.stringify({
       enc: signalEncrypted
     }))
@@ -232,6 +244,7 @@ export default class ION {
     console.log('sendTransfer, transfers:', JSON.stringify(transfers));
     var seed = tryteGen(this.prefix, nanoid(128))
     var _this = this
+    var iota = this.iota
     return new Promise(function(resolve, reject) {
       iota.api.sendTransfer(seed, _this.depth, _this.minWeightMagnitude, transfers, (e, r) => {
         if (e) {
@@ -291,6 +304,7 @@ export default class ION {
       ticket: Math.round(Math.random() * 9999)
     }
     this.tickets.push(ticketJson)
+    var iota = this.iota
     var ticketMessage = iota.utils.toTrytes(JSON.stringify(ticketJson))
     var transfers = [{
       tag: this.myTag,
@@ -316,3 +330,11 @@ export default class ION {
     checkAnswer()
   }
 }
+
+ION.utils = {
+  randomTag() {
+    return tryteGen("", nanoid(128), 27)
+  }
+}
+
+export default ION

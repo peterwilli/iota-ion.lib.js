@@ -4,6 +4,7 @@ module.exports = {
   entry: './src/main.js',
   output: {
     path: path.resolve(__dirname, 'dist'),
-    filename: 'iota-ion.lib.js'
+    filename: 'iota-ion.lib.js',
+    library: 'ION'
   }
 };

@@ -9,7 +9,6 @@
   "dependencies": {
     "crypto-js": "^3.1.9-1",
     "eventemitter3": "^3.1.0",
-    "iota.lib.js": "^0.4.7",
     "nanoid": "^1.0.3",
     "seed-random": "^2.2.0",
     "simple-peer": "^9.1.2"

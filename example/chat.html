@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+
+<head>
+  <meta charset="utf-8">
+  <title>ION Chat</title>
+</head>
+
+<body>
+  <div id="logs">
+  </div>
+  <input type="text" onkeypress="return keyPress(event)" style="width:100%;" placeholder="Type chat messages here when connected" id="chat" />
+
+  <script src="iota-browser.js"></script>
+  <script src="iota-ion.lib.js"></script>
+  <script>
+    // START logging functions (not important)
+    var logDiv = document.getElementById('logs');
+
+    function escapeHTML(unsafe_str) {
+      return unsafe_str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\"/g, '&quot;')
+        .replace(/\'/g, '&#39;')
+        .replace(/\//g, '&#x2F;')
+    }
+
+    function log(msg) {
+      logDiv.innerHTML += escapeHTML(msg) + "<br />";
+    }
+    // END logging functions
+    if (window.location.hash) {
+      function keyPress(e) {
+        if (e.keyCode == 13) {
+          var msg = myTag + ":" + e.currentTarget.value
+          log('Sent ' + msg)
+          ion.send(msg)
+          e.currentTarget.value = "";
+          return false;
+        }
+      }
+
+      // Make a regular IOTA object for initiating ION
+      var iota = new IOTA({
+        provider: 'https://nodes.testnet.iota.org:443/'
+      })
+
+      // The tag is more like your temporary ID. This way we know who is who.
+      var myTag = ION.utils.randomTag()
+
+      // Prefix makes sure that you the same room name / seed will result in different keys
+      // compared to other services using another prefix. It's mainly conflict-prevention.
+      var prefix = "rApx0uKKpRyTY8aP"
+      var ion = new ION(iota, prefix, window.location.hash, myTag)
+      ion.connect({})
+      log('ION started!')
+      ion.events.on('connect', function() {
+        log('ION connected with another peer!')
+        ion.events.on('data', function(data) {
+          log('Data received: ' + data)
+        })
+
+        // The lines below are required to let ION know that you are prepared
+        // to receive data
+        ion.flushCachedData()
+        ion.startRetrieving = true
+      })
+    } else {
+      // Fragment doesn't exist
+      alert('Please add a room name / seed. Just append a random string after a # in the URL.')
+    }
+  </script>
+</body>
+
+</html>
