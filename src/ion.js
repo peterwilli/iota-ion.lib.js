@@ -67,13 +67,6 @@ class ION {
     return CryptoJS.AES.decrypt(msg, this.encryptionKey).toString(CryptoJS.enc.Utf8)
   }
 
-  async stopPeer() {
-    if (this.peer !== null) {
-      this.peer.destroy()
-      this.peer = null
-    }
-  }
-
   async startPeer(options) {
     var defaultOptions = {
       initiator: false
@@ -289,12 +282,21 @@ class ION {
     }
   }
 
-  async reset() {
+  stop() {
     this.addr = null
+    if(this.checkCurrentAddressTimer !== null) {
+      clearInterval(this.checkCurrentAddressTimer)
+    }
+    this.checkCurrentAddressTimer = null;
+
     if (this.peer !== null) {
       this.peer.destroy()
       this.peer = null
     }
+  }
+
+  async reset() {
+    this.stop()
     await this.connect()
   }
 
@@ -303,7 +305,9 @@ class ION {
       this.generateAddress()
       console.log(`Using address: ${this.addr}`);
     }
-    this.checkCurrentAddressTimer = setInterval(this.checkCurrentAddress.bind(this), 1000)
+    if(this.checkCurrentAddressTimer === null) {
+      this.checkCurrentAddressTimer = setInterval(this.checkCurrentAddress.bind(this), 1000)
+    }
     var ticketJson = {
       tag: this.myTag,
       cmd: 'ticket'
@@ -344,5 +348,6 @@ ION.utils = {
     return tryteGen("", nanoid(128), 27)
   }
 }
+ION.version = "1.0.4"
 
 export default ION
