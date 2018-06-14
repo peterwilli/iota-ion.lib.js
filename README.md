@@ -25,7 +25,7 @@ Practically everything that is related to IoT or security, but in the need of la
 
 ## How to get started
 
-See [Simple chat](example/chat.html) for the most simple example with comments.
+See [Simple chat](example/chat.html) for the most simple example with comments. You can use the same API using the browser-script that is used in chat.html, or if you build a website with a module bundler like Webpack, you can use our NPM module: `yarn add iota-ion.lib.js`
 
 ## What is WebRTC?
 
