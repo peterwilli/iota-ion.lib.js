@@ -193,7 +193,7 @@ class ION {
         await this.processTickets();
       }
       else if(this.tickets.length > 2) {
-        this.reset();
+        // TODO: figure out a way to move to a new address or filter our the stale tickets.
       }
     }
     return true;
