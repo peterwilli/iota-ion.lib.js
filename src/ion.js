@@ -168,7 +168,7 @@ class ION {
       return true;
     }
     console.log('processBundle > bundle', bundle, JSON.stringify(json));
-    if (json.enc) {
+    if (json.cmd === "neg" && json.enc) {
       if(this.peer !== null && !this.waitingForTicket) {
         console.log('processBundle > json', json);
         var signal = this.decrypt(json.enc)
@@ -181,10 +181,12 @@ class ION {
       else {
         return false;
       }
-    } else if (json.ticket) {
+    } else if (json.cmd === "ticket") {
       this.tickets.push(json)
-      console.log('this.tickets.length', this.tickets.length);
-      if (this.tickets.length === 2) {
+      var uniqueTickets = this.getUniqueTickets()
+      console.log('uniqueTickets.length', uniqueTickets.length);
+      if (uniqueTickets.length === 2) {
+        this.events.emit('connecting')
         if(this.checkCurrentAddressTimer !== null) {
           clearInterval(this.checkCurrentAddressTimer)
           this.checkCurrentAddressTimer = null;
@@ -199,18 +201,20 @@ class ION {
     return true;
   }
 
+  getUniqueTickets() {
+    var filteredTickets = {}
+    for(var ticket of this.tickets) {
+      filteredTickets[ticket.tag] = ticket
+    }
+    return Object.values(filteredTickets)
+  }
+
   async processTickets() {
-    var tags = this.tickets.map((o) => {
+    var tags = this.getUniqueTickets().map((o) => {
       return o.tag;
     }).sort();
 
-    var initiator = this.tickets.map((o) => {
-      return o.ticket;
-    }).reduce((acc, val) => {
-      return acc + val;
-    }) % tags.length;
-
-    this.isInitiator = tags[initiator] === this.myTag;
+    this.isInitiator = tags[0] === this.myTag;
     await this.startPeer({ initiator: this.isInitiator })
   }
 
@@ -229,7 +233,8 @@ class ION {
     var signalEncrypted = this.encrypt(JSON.stringify(data))
     var iota = this.iota
     var encryptedMessage = iota.utils.toTrytes(JSON.stringify({
-      enc: signalEncrypted
+      enc: signalEncrypted,
+      cmd: "neg"
     }))
     var transfers = [{
       tag: this.myTag,
@@ -301,7 +306,7 @@ class ION {
     this.checkCurrentAddressTimer = setInterval(this.checkCurrentAddress.bind(this), 1000)
     var ticketJson = {
       tag: this.myTag,
-      ticket: Math.round(Math.random() * 9999)
+      cmd: 'ticket'
     }
     this.tickets.push(ticketJson)
     var iota = this.iota
