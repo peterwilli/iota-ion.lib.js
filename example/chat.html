@@ -63,7 +63,7 @@
     ion.events.on('connect', function() {
       log('ION connected with another peer!')
       document.getElementById('chat').disabled = false
-      
+
       ion.events.on('data', function(data) {
         log('Data received: ' + data)
       })

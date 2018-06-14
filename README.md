@@ -21,10 +21,11 @@ Practically everything that is related to IoT or security, but in the need of la
 ## Demo's
 
 - [ion.ooo](https://ion.ooo)
+- [Simple chat](example/chat.html)
 
 ## How to get started
 
-Soon
+See [Simple chat](example/chat.html) for the most simple example with comments.
 
 ## What is WebRTC?
 
