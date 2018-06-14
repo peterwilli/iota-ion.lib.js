@@ -9,7 +9,7 @@
 <body>
   <div id="logs">
   </div>
-  <input type="text" onkeypress="return keyPress(event)" style="width:100%;" placeholder="Type chat messages here when connected" id="chat" />
+  <input id="chat" disabled type="text" onkeypress="return keyPress(event)" style="width:100%;" placeholder="Type chat messages here when connected" id="chat" />
 
   <script src="iota-browser.js"></script>
   <script src="iota-ion.lib.js"></script>
@@ -31,46 +31,48 @@
       logDiv.innerHTML += escapeHTML(msg) + "<br />";
     }
     // END logging functions
-    if (window.location.hash) {
-      function keyPress(e) {
-        if (e.keyCode == 13) {
-          var msg = myTag + ":" + e.currentTarget.value
-          log('Sent ' + msg)
-          ion.send(msg)
-          e.currentTarget.value = "";
-          return false;
-        }
-      }
 
-      // Make a regular IOTA object for initiating ION
-      var iota = new IOTA({
-        provider: 'https://nodes.testnet.iota.org:443/'
-      })
-
-      // The tag is more like your temporary ID. This way we know who is who.
-      var myTag = ION.utils.randomTag()
-
-      // Prefix makes sure that you the same room name / seed will result in different keys
-      // compared to other services using another prefix. It's mainly conflict-prevention.
-      var prefix = "rApx0uKKpRyTY8aP"
-      var ion = new ION(iota, prefix, window.location.hash, myTag)
-      ion.connect({})
-      log('ION started!')
-      ion.events.on('connect', function() {
-        log('ION connected with another peer!')
-        ion.events.on('data', function(data) {
-          log('Data received: ' + data)
-        })
-
-        // The lines below are required to let ION know that you are prepared
-        // to receive data
-        ion.flushCachedData()
-        ion.startRetrieving = true
-      })
-    } else {
-      // Fragment doesn't exist
-      alert('Please add a room name / seed. Just append a random string after a # in the URL.')
+    if(!window.location.hash) {
+      window.location.hash = ION.utils.randomString()
     }
+
+    function keyPress(e) {
+      if (e.keyCode == 13) {
+        var msg = myTag + ":" + e.currentTarget.value
+        log('Sent ' + msg)
+        ion.send(msg)
+        e.currentTarget.value = "";
+        return false;
+      }
+    }
+
+    // Make a regular IOTA object for initiating ION
+    var iota = new IOTA({
+      provider: 'https://nodes.testnet.iota.org:443/'
+    })
+
+    // The tag is more like your temporary ID. This way we know who is who.
+    var myTag = ION.utils.randomTag()
+
+    // Prefix makes sure that you the same room name / seed will result in different keys
+    // compared to other services using another prefix. It's mainly conflict-prevention.
+    var prefix = "rApx0uKKpRyTY8aP"
+    var ion = new ION(iota, prefix, window.location.hash, myTag)
+    ion.connect({})
+    log('ION started! Share "' + window.location.href + '" with another browser')
+    ion.events.on('connect', function() {
+      log('ION connected with another peer!')
+      document.getElementById('chat').disabled = false
+      
+      ion.events.on('data', function(data) {
+        log('Data received: ' + data)
+      })
+
+      // The lines below are required to let ION know that you are prepared
+      // to receive data
+      ion.flushCachedData()
+      ion.startRetrieving = true
+    })
   </script>
 </body>
 

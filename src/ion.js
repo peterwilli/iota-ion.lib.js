@@ -332,6 +332,9 @@ class ION {
 }
 
 ION.utils = {
+  randomString(length = 16) {
+    return nanoid(length)
+  },
   randomTag() {
     return tryteGen("", nanoid(128), 27)
   }
