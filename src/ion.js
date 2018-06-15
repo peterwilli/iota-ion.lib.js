@@ -12,10 +12,11 @@ class ION {
     this.prefix = prefix
     this.encryptionKey = encryptionKey
     this.minWeightMagnitude = 9
+    this.checkingAnswers = false
     this.depth = 5
-    this.txsScanned = {}
+    this.msgScanned = {}
     this.events = new EventEmitter()
-    this.serialTxCache = {}
+    this.serialTxCache = []
     this.connected = false
     this.checkCurrentAddressTimer = null,
     this.tickets = []
@@ -67,7 +68,11 @@ class ION {
     return CryptoJS.AES.decrypt(msg, this.encryptionKey).toString(CryptoJS.enc.Utf8)
   }
 
-  async startPeer(options) {
+  startPeer(options) {
+    if(this.peer !== null) {
+      console.warn('Tried to call startPeer while ION already started, ignoring...');
+      return;
+    }
     var defaultOptions = {
       initiator: false
     }
@@ -76,21 +81,24 @@ class ION {
     console.log('startPeer, initiator:', initiator);
     var p = new Peer({
       initiator,
-      trickle: false,
-      reconnectTimer: 5000,
+      trickle: true,
       config: {
         iceServers: [{
-          urls: 'stun:stun.ekiga.net'
+          urls: 'stun:stun.iptel.org:3478'
         }, {
-          urls: 'stun:stun.iptel.org'
+          urls: 'stun:stun.ipfire.org:3478'
         }, {
-          urls: 'stun:stun.softjoys.com'
+          urls: 'stun:stun.phone.com:3478'
+        }, {
+          urls: 'stun:stun.xs4all.nl:3478'
         }, {
           urls: 'stun:stun1.l.google.com:19302'
         }, {
           urls: 'stun:stun2.l.google.com:19302'
         }, {
           urls: 'stun:stun3.l.google.com:19302'
+        }, {
+          urls: 'stun:stun.vodafone.ro:3478'
         }]
       }
     })
@@ -105,29 +113,38 @@ class ION {
     });
     p.on('error', function(err) {
       console.error('peer error', err)
+      _this.events.emit('error', err)
     })
     this.peer = p
   }
 
-  async waitForBundle() {
-    var searchValues = {
-      addresses: [this.addr]
-    }
+  async waitForBundles() {
+    var searchAddr = this.addr
     var _this = this
     return new Promise(function(resolve, reject) {
       var fn = async () => {
+        var searchValues = {
+          addresses: [searchAddr]
+        }
         var txs = await _this.findTransactionObjects(searchValues)
+        var bundles = []
         for (var tx of txs) {
-          if (!_this.txsScanned[tx.hash]) {
-            if (tx.currentIndex === 0) {
-              var bundle = await _this.getBundle(tx.hash)
-              if (bundle != null) {
-                return resolve(bundle)
-              }
+          if (tx.currentIndex === 0) {
+            var bundle = await _this.getBundle(tx.hash)
+            if (bundle != null) {
+              bundles.push(bundle)
             }
           }
         }
-        setTimeout(fn, 3000)
+        if(bundles.length > 0) {
+          return resolve(bundles)
+        }
+        if(searchAddr === _this.address) {
+          setTimeout(fn, 3000)
+        }
+        else {
+          return resolve([])
+        }
       }
       setTimeout(fn, 3000)
     })
@@ -154,44 +171,46 @@ class ION {
     return trytes
   }
 
-  async processBundle(bundle) {
-    var iota = this.iota
-    var json = JSON.parse(iota.utils.extractJson(bundle))
+  processBundle(bundle) {
     if (bundle[0].tag.indexOf(this.myTag) === 0) {
-      return true;
+      return;
     }
-    console.log('processBundle > bundle', bundle, JSON.stringify(json));
-    if (json.cmd === "neg" && json.enc) {
-      if(this.peer !== null && !this.waitingForTicket) {
-        console.log('processBundle > json', json);
-        var signal = this.decrypt(json.enc)
-        console.log('processBundle > signal', signal);
-        if (signal !== null) {
-          this.peer.signal(signal)
+    var iota = this.iota
+    var jsonEncrypted = JSON.parse(iota.utils.extractJson(bundle))
+    var jsons = JSON.parse(this.decrypt(jsonEncrypted.enc))
+    for(var json of jsons) {
+      var jsonStr = JSON.stringify(json)
+      if(this.msgScanned[jsonStr]) {
+        continue
+      }
+      console.log('processBundle > bundle', bundle, jsonStr);
+      if (json.cmd === "neg") {
+        if(this.peer !== null && !this.waitingForTicket) {
+          this.peer.signal(json.data)
+          this.msgScanned[jsonStr] = true
         }
-        return true;
-      }
-      else {
-        return false;
-      }
-    } else if (json.cmd === "ticket") {
-      this.tickets.push(json)
-      var uniqueTickets = this.getUniqueTickets()
-      console.log('uniqueTickets.length', uniqueTickets.length);
-      if (uniqueTickets.length === 2) {
-        this.events.emit('connecting')
-        if(this.checkCurrentAddressTimer !== null) {
-          clearInterval(this.checkCurrentAddressTimer)
-          this.checkCurrentAddressTimer = null;
+      } else if (json.cmd === "ticket") {
+        this.msgScanned[jsonStr] = true
+        this.tickets.push(json)
+        var uniqueTickets = this.getUniqueTickets()
+        console.log('uniqueTickets.length', uniqueTickets.length);
+        if (uniqueTickets.length === 2) {
+          this.events.emit('connecting')
+          if(this.checkCurrentAddressTimer !== null) {
+            clearInterval(this.checkCurrentAddressTimer)
+            this.checkCurrentAddressTimer = null;
+
+            // Reset timer with now a minute extra
+            this.checkCurrentAddressTimer = setInterval(this.checkCurrentAddress.bind(this), 60000)
+          }
+          this.waitingForTicket = false;
+          this.processTickets();
         }
-        this.waitingForTicket = false;
-        await this.processTickets();
-      }
-      else if(this.tickets.length > 2) {
-        // TODO: figure out a way to move to a new address or filter our the stale tickets.
+        else if(this.tickets.length > 2) {
+          // TODO: figure out a way to move to a new address or filter our the stale tickets.
+        }
       }
     }
-    return true;
   }
 
   getUniqueTickets() {
@@ -202,13 +221,13 @@ class ION {
     return Object.values(filteredTickets)
   }
 
-  async processTickets() {
+  processTickets() {
     var tags = this.getUniqueTickets().map((o) => {
       return o.tag;
     }).sort();
 
     this.isInitiator = tags[0] === this.myTag;
-    await this.startPeer({ initiator: this.isInitiator })
+    this.startPeer({ initiator: this.isInitiator })
   }
 
   handleData(data) {
@@ -223,28 +242,32 @@ class ION {
 
   async handleSignal(data) {
     console.log('handleSignal', JSON.stringify(data));
-    var signalEncrypted = this.encrypt(JSON.stringify(data))
+    await this.broadcastSecureJson({
+      cmd: 'neg',
+      data
+    })
+  }
+
+  async flushSerialTxCache() {
+    var jsonStr = JSON.stringify(this.serialTxCache)
+    var jsonEncrypted = this.encrypt(jsonStr)
+    this.serialTxCache.length = 0
     var iota = this.iota
-    var encryptedMessage = iota.utils.toTrytes(JSON.stringify({
-      enc: signalEncrypted,
-      cmd: "neg"
+    var seed = tryteGen(this.prefix, nanoid(128))
+    var encryptedTrytes = iota.utils.toTrytes(JSON.stringify({
+      enc: jsonEncrypted
     }))
     var transfers = [{
       tag: this.myTag,
       address: this.addr,
       value: 0,
-      message: encryptedMessage
+      message: encryptedTrytes
     }]
-    await this.sendTransfers(transfers);
-  }
 
-  async sendTransfers(transfers) {
-    console.log('sendTransfer, transfers:', JSON.stringify(transfers));
-    var seed = tryteGen(this.prefix, nanoid(128))
     var _this = this
-    var iota = this.iota
     return new Promise(function(resolve, reject) {
       iota.api.sendTransfer(seed, _this.depth, _this.minWeightMagnitude, transfers, (e, r) => {
+        console.log('broadcastJson, json:', jsonStr, e, r);
         if (e) {
           reject(e);
         } else {
@@ -252,6 +275,17 @@ class ION {
         }
       });
     });
+  }
+
+  async broadcastSecureJson(json) {
+    this.serialTxCache.push(json)
+    if(this.flushSerialTxCacheTimer !== null) {
+      clearTimeout(this.flushSerialTxCacheTimer)
+    }
+    var _this = this
+    this.flushSerialTxCacheTimer = setTimeout(() => {
+      _this.flushSerialTxCache().then()
+    }, 1000)
   }
 
   flushCachedData() {
@@ -265,6 +299,10 @@ class ION {
 
   handleConnect() {
     this.connected = true;
+    if(this.checkCurrentAddressTimer !== null) {
+      clearInterval(this.checkCurrentAddressTimer)
+      this.checkCurrentAddressTimer = null;
+    }
     this.events.emit('connect');
   }
 
@@ -284,10 +322,11 @@ class ION {
 
   stop() {
     this.addr = null
+    this.checkingAnswers = false
     if(this.checkCurrentAddressTimer !== null) {
       clearInterval(this.checkCurrentAddressTimer)
+      this.checkCurrentAddressTimer = null;
     }
-    this.checkCurrentAddressTimer = null;
 
     if (this.peer !== null) {
       this.peer.destroy()
@@ -303,8 +342,8 @@ class ION {
   async connect() {
     if (!this.addr) {
       this.generateAddress()
-      console.log(`Using address: ${this.addr}`);
     }
+    console.log(`connect() using address: ${this.addr}`);
     if(this.checkCurrentAddressTimer === null) {
       this.checkCurrentAddressTimer = setInterval(this.checkCurrentAddress.bind(this), 1000)
     }
@@ -313,30 +352,24 @@ class ION {
       cmd: 'ticket'
     }
     this.tickets.push(ticketJson)
-    var iota = this.iota
-    var ticketMessage = iota.utils.toTrytes(JSON.stringify(ticketJson))
-    var transfers = [{
-      tag: this.myTag,
-      address: this.addr,
-      value: 0,
-      message: ticketMessage
-    }]
-    await this.sendTransfers(transfers)
+    await this.broadcastSecureJson(ticketJson)
     var _this = this
     var checkAnswer = () => {
-      _this.waitForBundle().then(async (bundle) => {
-        if(bundle !== null) {
-          var ret = await _this.processBundle(bundle)
-          if(ret) {
-            for(var b of bundle) {
-              _this.txsScanned[b.hash] = true
-            }
-          }
+      _this.waitForBundles().then(async (bundles) => {
+        for(var bundle of bundles) {
+          _this.processBundle(bundle)
         }
-        setTimeout(checkAnswer, 500)
+        if(_this.checkingAnswers) {
+          setTimeout(checkAnswer, 500)
+        }
+      }).catch((e) => {
+        console.error(`waitForBundles`, e);
       })
     }
-    checkAnswer()
+    if(!this.checkingAnswers) {
+      this.checkingAnswers = true
+      checkAnswer()
+    }
   }
 }
 
@@ -348,6 +381,6 @@ ION.utils = {
     return tryteGen("", nanoid(128), 27)
   }
 }
-ION.version = "1.0.4"
+ION.version = "1.0.5"
 
 export default ION
