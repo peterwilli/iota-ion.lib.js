@@ -1,6 +1,6 @@
 {
   "name": "iota-ion.lib.js",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "main": "src/main.js",
   "license": "MIT",
   "scripts": {
@@ -11,7 +11,7 @@
     "eventemitter3": "^3.1.0",
     "nanoid": "^1.0.3",
     "seed-random": "^2.2.0",
-    "simple-peer": "^9.1.2"
+    "simple-peer": "https://github.com/feross/simple-peer.git"
   },
   "devDependencies": {
     "webpack": "^4.12.0",

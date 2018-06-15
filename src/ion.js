@@ -175,6 +175,13 @@ class ION {
     if (bundle[0].tag.indexOf(this.myTag) === 0) {
       return;
     }
+    if(this.checkCurrentAddressTimer !== null) {
+      clearInterval(this.checkCurrentAddressTimer)
+      this.checkCurrentAddressTimer = null;
+
+      // Reset timer with now a minute extra
+      this.checkCurrentAddressTimer = setInterval(this.checkCurrentAddress.bind(this), 60000)
+    }
     var iota = this.iota
     var jsonEncrypted = JSON.parse(iota.utils.extractJson(bundle))
     var jsons = JSON.parse(this.decrypt(jsonEncrypted.enc))
@@ -183,7 +190,7 @@ class ION {
       if(this.msgScanned[jsonStr]) {
         continue
       }
-      console.log('processBundle > bundle', bundle, jsonStr);
+      console.log('processBundle > msg', json);
       if (json.cmd === "neg") {
         if(this.peer !== null && !this.waitingForTicket) {
           this.peer.signal(json.data)
@@ -196,13 +203,6 @@ class ION {
         console.log('uniqueTickets.length', uniqueTickets.length);
         if (uniqueTickets.length === 2) {
           this.events.emit('connecting')
-          if(this.checkCurrentAddressTimer !== null) {
-            clearInterval(this.checkCurrentAddressTimer)
-            this.checkCurrentAddressTimer = null;
-
-            // Reset timer with now a minute extra
-            this.checkCurrentAddressTimer = setInterval(this.checkCurrentAddress.bind(this), 60000)
-          }
           this.waitingForTicket = false;
           this.processTickets();
         }
@@ -315,13 +315,14 @@ class ION {
       // Check if new address is available
       if (this.addr !== this.generateAddress()) {
         console.warn('No connection yet, and we moved to a new address, reset and reconnect');
-        this.reset();
+        await this.reset();
       }
     }
   }
 
   stop() {
     this.addr = null
+    this.startRetrieving = false
     this.checkingAnswers = false
     if(this.checkCurrentAddressTimer !== null) {
       clearInterval(this.checkCurrentAddressTimer)
@@ -381,6 +382,6 @@ ION.utils = {
     return tryteGen("", nanoid(128), 27)
   }
 }
-ION.version = "1.0.5"
+ION.version = "1.0.6"
 
 export default ION
