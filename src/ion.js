@@ -95,10 +95,6 @@ class ION {
           urls: 'stun:stun1.l.google.com:19302'
         }, {
           urls: 'stun:stun2.l.google.com:19302'
-        }, {
-          urls: 'stun:stun3.l.google.com:19302'
-        }, {
-          urls: 'stun:stun.vodafone.ro:3478'
         }]
       }
     })
@@ -315,7 +311,8 @@ class ION {
       // Check if new address is available
       if (this.addr !== this.generateAddress()) {
         console.warn('No connection yet, and we moved to a new address, reset and reconnect');
-        await this.reset();
+        // await this.reset();
+        window.location.reload();
       }
     }
   }
@@ -382,6 +379,6 @@ ION.utils = {
     return tryteGen("", nanoid(128), 27)
   }
 }
-ION.version = "1.0.6"
+ION.version = "1.0.8"
 
 export default ION
