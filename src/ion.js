@@ -311,8 +311,7 @@ class ION {
       // Check if new address is available
       if (this.addr !== this.generateAddress()) {
         console.warn('No connection yet, and we moved to a new address, reset and reconnect');
-        // await this.reset();
-        window.location.reload();
+        await this.reset();
       }
     }
   }
