@@ -40,7 +40,6 @@ class PeerHandler {
 
   handleData(data) {
     data = data + ""
-    console.log('handleData', data);
     if (this.startRetrieving) {
       this.ion.emit('data', {
         user: this.user,
@@ -85,6 +84,7 @@ class ION extends EventEmitter {
     this.peers = {}
     this.tickets = {}
     this.waitingForTicket = true
+    window.peers = this.peers
   }
 
   ephemeralAddr() {
