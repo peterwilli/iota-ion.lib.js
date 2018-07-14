@@ -5,8 +5,72 @@ import tempKey from './utils/temp-key'
 const nanoid = require('nanoid')
 var EventEmitter = require('eventemitter3')
 
-class ION {
+class PeerHandler {
+  constructor(ion, user) {
+    this.ion = ion
+    this.user = user
+    this.dataCache = []
+    this.startRetrieving = false
+  }
+
+  log(...args) {
+    console.log(`[PeerHandler::${this.user}]`, ...args)
+  }
+
+  flushCachedData() {
+    if (this.dataCache.length > 0) {
+      for (var data of this.dataCache) {
+        this.ion.emit('data', {
+          user: this.user,
+          data
+        });
+      }
+      this.dataCache.length = 0
+    }
+  }
+
+  handleConnect() {
+    this.connected = true;
+    this.ion.emit('connect', {
+      user: this.user
+    });
+    this.flushCachedData()
+    this.startRetrieving = true
+  }
+
+  handleData(data) {
+    data = data + ""
+    console.log('handleData', data);
+    if (this.startRetrieving) {
+      this.ion.emit('data', {
+        user: this.user,
+        data
+      })
+    } else {
+      this.dataCache.push(data)
+    }
+  }
+
+  handleError(e) {
+    this.ion.emit('error', {
+      user: this.user,
+      error: e
+    })
+  }
+
+  async handleSignal(data) {
+    this.log('handleSignal', JSON.stringify(data));
+    await this.ion.broadcastSecureJson({
+      cmd: 'neg',
+      user: this.user,
+      data
+    })
+  }
+}
+
+class ION extends EventEmitter {
   constructor(iota, prefix, encryptionKey, myTag) {
+    super()
     this.iota = iota
     this.myTag = myTag
     this.prefix = prefix
@@ -15,23 +79,19 @@ class ION {
     this.checkingAnswers = false
     this.depth = 5
     this.msgScanned = {}
-    this.events = new EventEmitter()
     this.serialTxCache = []
     this.connected = false
     this.checkCurrentAddressTimer = null,
-    this.tickets = []
-    this.peer = null
+    this.peers = {}
+    this.tickets = {}
     this.waitingForTicket = true
-    this.dataCache = []
-    this.startRetrieving = false
   }
 
-  generateAddress() {
+  ephemeralAddr() {
     var iota = this.iota
     var iotaSeed = tryteGen(this.prefix, tempKey(this.prefix, this.encryptionKey))
     var addr = iota.utils.addChecksum(iotaSeed)
-    this.addr = iotaSeed
-    return this.addr
+    return addr
   }
 
   async getBundle(tailTx) {
@@ -60,6 +120,29 @@ class ION {
     })
   }
 
+  getRandomIce() {
+    var servers = [{
+      urls: 'stun:stun.iptel.org:3478'
+    }, {
+      urls: 'stun:stun.ipfire.org:3478'
+    }, {
+      urls: 'stun:stun.phone.com:3478'
+    }, {
+      urls: 'stun:stun.xs4all.nl:3478'
+    }, {
+      urls: 'stun:stun1.l.google.com:19302'
+    }, {
+      urls: 'stun:stun2.l.google.com:19302'
+    }, {
+      urls: 'stun:stun3.l.google.com:19302'
+    }, {
+      urls: 'stun:stun.vodafone.ro:3478'
+    }]
+    var ret = [servers[Math.floor(Math.random() * (servers.length - 1))]]
+    console.log('using stun: ', ret[0]);
+    return ret
+  }
+
   encrypt(msg) {
     return CryptoJS.AES.encrypt(msg, this.encryptionKey).toString()
   }
@@ -69,57 +152,26 @@ class ION {
   }
 
   startPeer(options) {
-    if(this.peer !== null) {
-      console.warn('Tried to call startPeer while ION already started, ignoring...');
-      return;
-    }
-    var defaultOptions = {
-      initiator: false
-    }
-    options = Object.assign(defaultOptions, options)
-    var { initiator } = options
-    console.log('startPeer, initiator:', initiator);
+    const initiator = options.initiator
+    console.log(`startPeer as ${options.user}. Initiator is ${options.initiator}...`);
     var p = new Peer({
       initiator,
-      trickle: true,
+      trickle: false,
       config: {
-        iceServers: [{
-          urls: 'stun:stun.iptel.org:3478'
-        }, {
-          urls: 'stun:stun.ipfire.org:3478'
-        }, {
-          urls: 'stun:stun.phone.com:3478'
-        }, {
-          urls: 'stun:stun.xs4all.nl:3478'
-        }, {
-          urls: 'stun:stun1.l.google.com:19302'
-        }, {
-          urls: 'stun:stun2.l.google.com:19302'
-        }, {
-          urls: 'stun:stun3.l.google.com:19302'
-        }, {
-          urls: 'stun:stun.vodafone.ro:3478'
-        }]
+        iceServers: this.getRandomIce()
       }
     })
-    p.on('connect', this.handleConnect.bind(this));
-    p.on('data', this.handleData.bind(this));
 
-    var _this = this;
-    p.on('signal', (signal) => {
-      _this.handleSignal(signal).then((e, r) => {
-        console.log('p => Signal', e, r);
-      });
-    });
-    p.on('error', function(err) {
-      console.error('peer error', err)
-      _this.events.emit('error', err)
-    })
-    this.peer = p
+    var handler = new PeerHandler(this, options.user)
+    p.on('connect', handler.handleConnect.bind(handler))
+    p.on('data', handler.handleData.bind(handler))
+    p.on('signal', handler.handleSignal.bind(handler))
+    p.on('error', handler.handleError.bind(handler))
+    this.peers[options.user] = p
   }
 
   async waitForBundles() {
-    var searchAddr = this.addr
+    var searchAddr = this.ephemeralAddr()
     var _this = this
     return new Promise(function(resolve, reject) {
       var fn = async () => {
@@ -136,13 +188,12 @@ class ION {
             }
           }
         }
-        if(bundles.length > 0) {
+        if (bundles.length > 0) {
           return resolve(bundles)
         }
-        if(searchAddr === _this.address) {
+        if (searchAddr === _this.address) {
           setTimeout(fn, 3000)
-        }
-        else {
+        } else {
           return resolve([])
         }
       }
@@ -175,7 +226,7 @@ class ION {
     if (bundle[0].tag.indexOf(this.myTag) === 0) {
       return;
     }
-    if(this.checkCurrentAddressTimer !== null) {
+    if (this.checkCurrentAddressTimer !== null) {
       clearInterval(this.checkCurrentAddressTimer)
       this.checkCurrentAddressTimer = null;
 
@@ -185,67 +236,32 @@ class ION {
     var iota = this.iota
     var jsonEncrypted = JSON.parse(iota.utils.extractJson(bundle))
     var jsons = JSON.parse(this.decrypt(jsonEncrypted.enc))
-    for(var json of jsons) {
+    for (var json of jsons) {
       var jsonStr = JSON.stringify(json)
-      if(this.msgScanned[jsonStr]) {
+      if (this.msgScanned[jsonStr]) {
         continue
       }
       console.log('processBundle > msg', json);
-      if (json.cmd === "neg") {
-        if(this.peer !== null && !this.waitingForTicket) {
-          this.peer.signal(json.data)
-          this.msgScanned[jsonStr] = true
+      if (json.cmd === 'neg') {
+        if (!this.peers[json.user]) {
+          this.startPeer({ user: json.user, initiator: false })
         }
-      } else if (json.cmd === "ticket") {
+        this.peers[json.user].signal(json.data)
         this.msgScanned[jsonStr] = true
-        this.tickets.push(json)
-        var uniqueTickets = this.getUniqueTickets()
-        console.log('uniqueTickets.length', uniqueTickets.length);
-        if (uniqueTickets.length === 2) {
-          this.events.emit('connecting')
-          this.waitingForTicket = false;
-          this.processTickets();
-        }
-        else if(this.tickets.length > 2) {
-          // TODO: figure out a way to move to a new address or filter our the stale tickets.
-        }
+      } else if (json.cmd === "ticket") {
+        this.tickets[json.tag] = json
+        console.log('this.tickets.length', Object.keys(this.tickets).length);
+        this.processTickets(this.tickets);
+        this.msgScanned[jsonStr] = true
       }
     }
   }
 
-  getUniqueTickets() {
-    var filteredTickets = {}
-    for(var ticket of this.tickets) {
-      filteredTickets[ticket.tag] = ticket
-    }
-    return Object.values(filteredTickets)
-  }
-
-  processTickets() {
-    var tags = this.getUniqueTickets().map((o) => {
-      return o.tag;
-    }).sort();
-
-    this.isInitiator = tags[0] === this.myTag;
-    this.startPeer({ initiator: this.isInitiator })
-  }
-
-  handleData(data) {
-    data = data + ""
-    if(this.startRetrieving) {
-      this.events.emit('data', data);
-    }
-    else {
-      this.dataCache.push(data)
-    }
-  }
-
-  async handleSignal(data) {
-    console.log('handleSignal', JSON.stringify(data));
-    await this.broadcastSecureJson({
-      cmd: 'neg',
-      data
-    })
+  processTickets(tickets) {
+    var _this = this
+    Object.values(this.tickets)
+      .filter(ticket => !_this.peers[ticket.tag] && ticket.tag !== _this.myTag)
+      .forEach(ticket => _this.startPeer({ user: ticket.tag, initiator: true }))
   }
 
   async flushSerialTxCache() {
@@ -259,7 +275,7 @@ class ION {
     }))
     var transfers = [{
       tag: this.myTag,
-      address: this.addr,
+      address: this.ephemeralAddr(),
       value: 0,
       message: encryptedTrytes
     }]
@@ -279,7 +295,7 @@ class ION {
 
   async broadcastSecureJson(json) {
     this.serialTxCache.push(json)
-    if(this.flushSerialTxCacheTimer !== null) {
+    if (this.flushSerialTxCacheTimer !== null) {
       clearTimeout(this.flushSerialTxCacheTimer)
     }
     var _this = this
@@ -288,51 +304,24 @@ class ION {
     }, 1000)
   }
 
-  flushCachedData() {
-    if(this.dataCache.length > 0) {
-      for(var data of this.dataCache) {
-        this.events.emit('data', data);
-      }
-      this.dataCache.length = 0
-    }
+  send(user, msg) {
+    this.peers[user].send(msg);
   }
 
-  handleConnect() {
-    this.connected = true;
-    if(this.checkCurrentAddressTimer !== null) {
-      clearInterval(this.checkCurrentAddressTimer)
-      this.checkCurrentAddressTimer = null;
-    }
-    this.events.emit('connect');
-  }
-
-  send(msg) {
-    this.peer.send(msg);
-  }
-
-  async checkCurrentAddress() {
-    if (!this.connected) {
-      // Check if new address is available
-      if (this.addr !== this.generateAddress()) {
-        console.warn('No connection yet, and we moved to a new address, reset and reconnect');
-        await this.reset();
-      }
+  broadcast(msg) {
+    for(var k in this.peers) {
+      this.peers[k].send(msg);
     }
   }
 
   stop() {
     this.addr = null
-    this.startRetrieving = false
     this.checkingAnswers = false
-    if(this.checkCurrentAddressTimer !== null) {
-      clearInterval(this.checkCurrentAddressTimer)
-      this.checkCurrentAddressTimer = null;
-    }
 
-    if (this.peer !== null) {
-      this.peer.destroy()
-      this.peer = null
+    for(var k in this.peers) {
+      this.peers[k].destroy()
     }
+    this.peers = {}
   }
 
   async reset() {
@@ -341,33 +330,25 @@ class ION {
   }
 
   async connect() {
-    if (!this.addr) {
-      this.generateAddress()
-    }
-    console.log(`connect() using address: ${this.addr}`);
-    if(this.checkCurrentAddressTimer === null) {
-      this.checkCurrentAddressTimer = setInterval(this.checkCurrentAddress.bind(this), 1000)
-    }
     var ticketJson = {
       tag: this.myTag,
       cmd: 'ticket'
     }
-    this.tickets.push(ticketJson)
     await this.broadcastSecureJson(ticketJson)
     var _this = this
     var checkAnswer = () => {
       _this.waitForBundles().then(async (bundles) => {
-        for(var bundle of bundles) {
+        for (var bundle of bundles) {
           _this.processBundle(bundle)
         }
-        if(_this.checkingAnswers) {
+        if (_this.checkingAnswers) {
           setTimeout(checkAnswer, 500)
         }
       }).catch((e) => {
         console.error(`waitForBundles`, e);
       })
     }
-    if(!this.checkingAnswers) {
+    if (!this.checkingAnswers) {
       this.checkingAnswers = true
       checkAnswer()
     }
