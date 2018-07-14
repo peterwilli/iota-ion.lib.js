@@ -226,13 +226,6 @@ class ION extends EventEmitter {
     if (bundle[0].tag.indexOf(this.myTag) === 0) {
       return;
     }
-    if (this.checkCurrentAddressTimer !== null) {
-      clearInterval(this.checkCurrentAddressTimer)
-      this.checkCurrentAddressTimer = null;
-
-      // Reset timer with now a minute extra
-      this.checkCurrentAddressTimer = setInterval(this.checkCurrentAddress.bind(this), 60000)
-    }
     var iota = this.iota
     var jsonEncrypted = JSON.parse(iota.utils.extractJson(bundle))
     var jsons = JSON.parse(this.decrypt(jsonEncrypted.enc))
@@ -241,12 +234,12 @@ class ION extends EventEmitter {
       if (this.msgScanned[jsonStr]) {
         continue
       }
-      console.log('processBundle > msg', json);
+      console.log(`processBundle[${ bundle[0].tag }] > msg`, json);
       if (json.cmd === 'neg') {
-        if (!this.peers[json.user]) {
-          this.startPeer({ user: json.user, initiator: false })
+        if (!this.peers[bundle[0].tag]) {
+          this.startPeer({ user: bundle[0].tag, initiator: false })
         }
-        this.peers[json.user].signal(json.data)
+        this.peers[bundle[0].tag].signal(json.data)
         this.msgScanned[jsonStr] = true
       } else if (json.cmd === "ticket") {
         this.tickets[json.tag] = json
@@ -261,7 +254,9 @@ class ION extends EventEmitter {
     var _this = this
     Object.values(this.tickets)
       .filter(ticket => !_this.peers[ticket.tag] && ticket.tag !== _this.myTag)
-      .forEach(ticket => _this.startPeer({ user: ticket.tag, initiator: true }))
+      .forEach(ticket => {
+        _this.startPeer({ user: ticket.tag, initiator: true })
+      })
   }
 
   async flushSerialTxCache() {
