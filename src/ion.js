@@ -85,7 +85,23 @@ class ION extends EventEmitter {
     this.tickets = {}
     this.waitingForTicket = true
     this.genesisTimestamp = Math.round(+new Date() / 1000)
-    window.ion = this
+    this.iceServers = [{
+      urls: 'stun:stun.iptel.org:3478'
+    }, {
+      urls: 'stun:stun.ipfire.org:3478'
+    }, {
+      urls: 'stun:stun.phone.com:3478'
+    }, {
+      urls: 'stun:stun.xs4all.nl:3478'
+    }, {
+      urls: 'stun:stun1.l.google.com:19302'
+    }, {
+      urls: 'stun:stun2.l.google.com:19302'
+    }, {
+      urls: 'stun:stun3.l.google.com:19302'
+    }, {
+      urls: 'stun:stun.vodafone.ro:3478'
+    }]
   }
 
   ephemeralAddr() {
@@ -121,29 +137,6 @@ class ION extends EventEmitter {
     })
   }
 
-  getRandomIce() {
-    var servers = [{
-      urls: 'stun:stun.iptel.org:3478'
-    }, {
-      urls: 'stun:stun.ipfire.org:3478'
-    }, {
-      urls: 'stun:stun.phone.com:3478'
-    }, {
-      urls: 'stun:stun.xs4all.nl:3478'
-    }, {
-      urls: 'stun:stun1.l.google.com:19302'
-    }, {
-      urls: 'stun:stun2.l.google.com:19302'
-    }, {
-      urls: 'stun:stun3.l.google.com:19302'
-    }, {
-      urls: 'stun:stun.vodafone.ro:3478'
-    }]
-    var ret = [servers[Math.floor(Math.random() * (servers.length - 1))]]
-    console.log('using stun: ', ret[0]);
-    return ret
-  }
-
   encrypt(msg) {
     return CryptoJS.AES.encrypt(msg, this.encryptionKey).toString()
   }
@@ -157,9 +150,9 @@ class ION extends EventEmitter {
     console.log(`startPeer as ${options.user}. Initiator is ${options.initiator}...`);
     var p = new Peer({
       initiator,
-      trickle: false,
+      trickle: true,
       config: {
-        iceServers: this.getRandomIce()
+        iceServers: this.iceServers
       }
     })
 

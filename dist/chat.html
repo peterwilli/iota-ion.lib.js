@@ -10,13 +10,11 @@
   <div id="logs">
   </div>
   <input id="chat" disabled type="text" onkeypress="return keyPress(event)" style="width:100%;" placeholder="Type chat messages here when connected" id="chat" />
-
   <script src="iota-browser.js"></script>
   <script src="iota-ion.lib.js"></script>
   <script>
     // START logging functions (not important)
     var logDiv = document.getElementById('logs');
-
     function escapeHTML(unsafe_str) {
       return unsafe_str
         .replace(/&/g, '&amp;')
@@ -30,6 +28,7 @@
     function log(msg) {
       logDiv.innerHTML += escapeHTML(msg) + "<br />";
     }
+
     // END logging functions
 
     if(!window.location.hash) {
