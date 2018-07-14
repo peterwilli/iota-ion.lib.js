@@ -84,7 +84,8 @@ class ION extends EventEmitter {
     this.peers = {}
     this.tickets = {}
     this.waitingForTicket = true
-    window.peers = this.peers
+    this.genesisTimestamp = Math.round(+new Date() / 1000)
+    window.ion = this
   }
 
   ephemeralAddr() {
@@ -226,6 +227,10 @@ class ION extends EventEmitter {
     if (bundle[0].tag.indexOf(this.myTag) === 0) {
       return;
     }
+    if(bundle[0].timestamp < this.genesisTimestamp) {
+      // Anything before we arrived will be ignored.
+      return;
+    }
     var iota = this.iota
     var jsonEncrypted = JSON.parse(iota.utils.extractJson(bundle))
     var jsons = JSON.parse(this.decrypt(jsonEncrypted.enc))
@@ -324,12 +329,16 @@ class ION extends EventEmitter {
     await this.connect()
   }
 
-  async connect() {
+  async broadcastMyTicket() {
     var ticketJson = {
       tag: this.myTag,
       cmd: 'ticket'
     }
     await this.broadcastSecureJson(ticketJson)
+  }
+
+  async connect() {
+    await this.broadcastMyTicket()
     var _this = this
     var checkAnswer = () => {
       _this.waitForBundles().then(async (bundles) => {
