@@ -57,6 +57,17 @@ class PeerHandler {
     })
   }
 
+  handleClose() {
+    this.log('Connection closed, destroying object...')
+    this.ion.peers[this.user].destroy()
+    delete this.ion.peers[this.user]
+    delete this.ion.tickets[this.user]
+
+    this.ion.emit('close', {
+      user: this.user
+    })
+  }
+
   async handleSignal(data) {
     this.log('handleSignal', JSON.stringify(data));
     await this.ion.broadcastSecureJson({
@@ -86,27 +97,19 @@ class ION extends EventEmitter {
     this.waitingForTicket = true
     this.genesisTimestamp = Math.round(+new Date() / 1000)
     this.iceServers = [{
-      urls: 'stun:stun.iptel.org:3478'
-    }, {
-      urls: 'stun:stun.ipfire.org:3478'
-    }, {
-      urls: 'stun:stun.phone.com:3478'
-    }, {
       urls: 'stun:stun.xs4all.nl:3478'
     }, {
       urls: 'stun:stun1.l.google.com:19302'
     }, {
       urls: 'stun:stun2.l.google.com:19302'
     }, {
-      urls: 'stun:stun3.l.google.com:19302'
-    }, {
       urls: 'stun:stun.vodafone.ro:3478'
     }]
   }
 
-  ephemeralAddr() {
+  ephemeralAddr(offset = 0) {
     var iota = this.iota
-    var iotaSeed = tryteGen(this.prefix, tempKey(this.prefix, this.encryptionKey))
+    var iotaSeed = tryteGen(this.prefix, tempKey(this.prefix, this.encryptionKey, undefined, undefined, offset))
     var addr = iota.utils.addChecksum(iotaSeed)
     return addr
   }
@@ -161,17 +164,18 @@ class ION extends EventEmitter {
     p.on('data', handler.handleData.bind(handler))
     p.on('signal', handler.handleSignal.bind(handler))
     p.on('error', handler.handleError.bind(handler))
+    p.on('close', handler.handleClose.bind(handler))
     this.peers[options.user] = p
   }
 
   async waitForBundles() {
-    var searchAddr = this.ephemeralAddr()
     var _this = this
     return new Promise(function(resolve, reject) {
       var fn = async () => {
         var searchValues = {
-          addresses: [searchAddr]
+          addresses: [_this.ephemeralAddr(), _this.ephemeralAddr(1)]
         }
+        console.log('searchValues', searchValues.addresses.join(" "));
         var txs = await _this.findTransactionObjects(searchValues)
         var bundles = []
         for (var tx of txs) {
@@ -185,11 +189,7 @@ class ION extends EventEmitter {
         if (bundles.length > 0) {
           return resolve(bundles)
         }
-        if (searchAddr === _this.address) {
-          setTimeout(fn, 3000)
-        } else {
-          return resolve([])
-        }
+        setTimeout(fn, 3000)
       }
       setTimeout(fn, 3000)
     })
@@ -226,18 +226,26 @@ class ION extends EventEmitter {
     }
     var iota = this.iota
     var jsonEncrypted = JSON.parse(iota.utils.extractJson(bundle))
-    var jsons = JSON.parse(this.decrypt(jsonEncrypted.enc))
+    var jsonStr = this.decrypt(jsonEncrypted.enc)
+    try {
+      var jsons = JSON.parse(jsonStr)
+    }
+    catch (e) {
+      console.error(`Error parsing decrypted JSON: '${jsonStr}'. Encrypted JSON was: ${JSON.stringify(jsonEncrypted)}`, e);
+    }
     for (var json of jsons) {
-      var jsonStr = JSON.stringify(json)
+      jsonStr = JSON.stringify(json)
       if (this.msgScanned[jsonStr]) {
         continue
       }
       console.log(`processBundle[${ bundle[0].tag }] > msg`, json);
       if (json.cmd === 'neg') {
-        if (!this.peers[bundle[0].tag]) {
-          this.startPeer({ user: bundle[0].tag, initiator: false })
+        if(json.user === this.myTag) {
+          if (!this.peers[bundle[0].tag]) {
+            this.startPeer({ user: bundle[0].tag, initiator: false })
+          }
+          this.peers[bundle[0].tag].signal(json.data)
         }
-        this.peers[bundle[0].tag].signal(json.data)
         this.msgScanned[jsonStr] = true
       } else if (json.cmd === "ticket") {
         this.tickets[json.tag] = json
@@ -298,12 +306,17 @@ class ION extends EventEmitter {
   }
 
   send(user, msg) {
-    this.peers[user].send(msg);
+    try {
+      this.peers[user].send(msg)
+    }
+    catch (e) {
+      console.error(`Error (ignored) while sending '${msg}' to ${user}!)`, e);
+    }
   }
 
   broadcast(msg) {
     for(var k in this.peers) {
-      this.peers[k].send(msg);
+      this.send(k, msg);
     }
   }
 
@@ -311,10 +324,11 @@ class ION extends EventEmitter {
     this.addr = null
     this.checkingAnswers = false
 
-    for(var k in this.peers) {
-      this.peers[k].destroy()
+    for(var key of Object.keys(this.peers)) {
+      this.peers[key].destroy()
+      delete this.peers[key]
+      delete this.tickets[key]
     }
-    this.peers = {}
   }
 
   async reset() {
@@ -339,7 +353,7 @@ class ION extends EventEmitter {
           _this.processBundle(bundle)
         }
         if (_this.checkingAnswers) {
-          setTimeout(checkAnswer, 500)
+          setTimeout(checkAnswer, 1000)
         }
       }).catch((e) => {
         console.error(`waitForBundles`, e);

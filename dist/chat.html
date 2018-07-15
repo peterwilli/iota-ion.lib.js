@@ -35,9 +35,14 @@
       window.location.hash = ION.utils.randomString()
     }
 
+    var nickname = null;
+    while(nickname === null) {
+      nickname = prompt("Please enter a nickname (only known to the people in this room)")
+    }
+
     function keyPress(e) {
       if (e.keyCode == 13) {
-        var msg = myTag + ":" + e.currentTarget.value
+        var msg = nickname + ": " + e.currentTarget.value
         log('Sent ' + msg)
         ion.broadcast(msg)
         e.currentTarget.value = "";
@@ -59,13 +64,13 @@
     var ion = new ION(iota, prefix, window.location.hash, myTag)
     ion.connect({})
     log('ION started! Share "' + window.location.href + '" with another browser')
-    ion.on('connect', function() {
-      log('ION connected with another peer!')
+    ion.on('connect', function(obj) {
+      log('ION connected with '+ obj.user +'!')
       document.getElementById('chat').disabled = false
+    })
 
-      ion.on('data', function(obj) {
-        log('Data received: ' + obj.data)
-      })
+    ion.on('data', function(obj) {
+      log(obj.data)
     })
   </script>
 </body>

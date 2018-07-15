@@ -1,7 +1,7 @@
 const seedRandom = require('seed-random')
 
-export default (prefix, seed, length = 32, secondsPrecision = 60) => {
-  seed = prefix + seed + (Math.round((+new Date() / 1000 / secondsPrecision)) * secondsPrecision)
+export default (prefix, seed, length = 32, secondsPrecision = 60, offset = 0) => {
+  seed = prefix + seed + ((Math.round((+new Date() / 1000 / secondsPrecision)) * secondsPrecision) - (offset * secondsPrecision))
   var charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
   var result = [];
   var rnd = seedRandom(seed);
