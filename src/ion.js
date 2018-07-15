@@ -88,7 +88,7 @@ class ION extends EventEmitter {
     this.minWeightMagnitude = 9
     this.checkingAnswers = false
     this.depth = 5
-    this.msgScanned = {}
+    this.bundlesScanned = {}
     this.serialTxCache = []
     this.connected = false
     this.checkCurrentAddressTimer = null,
@@ -173,20 +173,27 @@ class ION extends EventEmitter {
     return new Promise(function(resolve, reject) {
       var fn = async () => {
         var searchValues = {
-          addresses: [_this.ephemeralAddr(), _this.ephemeralAddr(1)]
+          addresses: [_this.ephemeralAddr(1), _this.ephemeralAddr()]
         }
         console.log('searchValues', searchValues.addresses.join(" "));
         var txs = await _this.findTransactionObjects(searchValues)
         var bundles = []
         for (var tx of txs) {
           if (tx.currentIndex === 0) {
-            var bundle = await _this.getBundle(tx.hash)
-            if (bundle != null) {
-              bundles.push(bundle)
+            if(!_this.bundlesScanned[tx.bundle]) {
+              var bundle = await _this.getBundle(tx.hash)
+              if (bundle != null) {
+                bundles.push(bundle)
+                _this.bundlesScanned[tx.bundle] = true
+              }
             }
           }
         }
         if (bundles.length > 0) {
+          bundles.sort((a, b) => {
+            return a[0].timestamp > b[0].timestamp
+          })
+          console.log('ts', bundles.map((b) => b[0].timestamp));
           return resolve(bundles)
         }
         setTimeout(fn, 3000)
@@ -235,9 +242,6 @@ class ION extends EventEmitter {
     }
     for (var json of jsons) {
       jsonStr = JSON.stringify(json)
-      if (this.msgScanned[jsonStr]) {
-        continue
-      }
       console.log(`processBundle[${ bundle[0].tag }] > msg`, json);
       if (json.cmd === 'neg') {
         if(json.user === this.myTag) {
@@ -246,12 +250,10 @@ class ION extends EventEmitter {
           }
           this.peers[bundle[0].tag].signal(json.data)
         }
-        this.msgScanned[jsonStr] = true
       } else if (json.cmd === "ticket") {
         this.tickets[json.tag] = json
         console.log('this.tickets.length', Object.keys(this.tickets).length);
         this.processTickets(this.tickets);
-        this.msgScanned[jsonStr] = true
       }
     }
   }
@@ -284,7 +286,6 @@ class ION extends EventEmitter {
     var _this = this
     return new Promise(function(resolve, reject) {
       iota.api.sendTransfer(seed, _this.depth, _this.minWeightMagnitude, transfers, (e, r) => {
-        console.log('broadcastJson, json:', jsonStr, e, r);
         if (e) {
           reject(e);
         } else {
@@ -349,6 +350,7 @@ class ION extends EventEmitter {
     var _this = this
     var checkAnswer = () => {
       _this.waitForBundles().then(async (bundles) => {
+        console.log('bundles:', bundles.length);
         for (var bundle of bundles) {
           _this.processBundle(bundle)
         }
