@@ -193,7 +193,6 @@ class ION extends EventEmitter {
           bundles.sort((a, b) => {
             return a[0].timestamp > b[0].timestamp
           })
-          console.log('ts', bundles.map((b) => b[0].timestamp));
           return resolve(bundles)
         }
         setTimeout(fn, 3000)
@@ -350,7 +349,6 @@ class ION extends EventEmitter {
     var _this = this
     var checkAnswer = () => {
       _this.waitForBundles().then(async (bundles) => {
-        console.log('bundles:', bundles.length);
         for (var bundle of bundles) {
           _this.processBundle(bundle)
         }
@@ -376,6 +374,6 @@ ION.utils = {
     return tryteGen("", nanoid(128), 27)
   }
 }
-ION.version = "1.0.8"
+ION.version = "1.0.9"
 
 export default ION

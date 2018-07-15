@@ -1,6 +1,6 @@
 {
   "name": "iota-ion.lib.js",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "main": "src/main.js",
   "license": "MIT",
   "scripts": {

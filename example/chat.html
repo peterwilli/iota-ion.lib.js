@@ -10,13 +10,11 @@
   <div id="logs">
   </div>
   <input id="chat" disabled type="text" onkeypress="return keyPress(event)" style="width:100%;" placeholder="Type chat messages here when connected" id="chat" />
-
   <script src="iota-browser.js"></script>
   <script src="iota-ion.lib.js"></script>
   <script>
     // START logging functions (not important)
     var logDiv = document.getElementById('logs');
-
     function escapeHTML(unsafe_str) {
       return unsafe_str
         .replace(/&/g, '&amp;')
@@ -30,17 +28,23 @@
     function log(msg) {
       logDiv.innerHTML += escapeHTML(msg) + "<br />";
     }
+
     // END logging functions
 
     if(!window.location.hash) {
       window.location.hash = ION.utils.randomString()
     }
 
+    var nickname = null;
+    while(nickname === null) {
+      nickname = prompt("Please enter a nickname (only known to the people in this room)")
+    }
+
     function keyPress(e) {
       if (e.keyCode == 13) {
-        var msg = myTag + ":" + e.currentTarget.value
+        var msg = nickname + ": " + e.currentTarget.value
         log('Sent ' + msg)
-        ion.send(msg)
+        ion.broadcast(msg)
         e.currentTarget.value = "";
         return false;
       }
@@ -59,19 +63,14 @@
     var prefix = "rApx0uKKpRyTY8aP"
     var ion = new ION(iota, prefix, window.location.hash, myTag)
     ion.connect({})
-    log('ION started! Share "' + window.location.href + '" with another browser')
-    ion.events.on('connect', function() {
-      log('ION connected with another peer!')
+    log('ION started! Share "' + window.location.href + '" with another person or put it in second browser tab.')
+    ion.on('connect', function(obj) {
+      log('ION connected with '+ obj.user +'!')
       document.getElementById('chat').disabled = false
+    })
 
-      ion.events.on('data', function(data) {
-        log('Data received: ' + data)
-      })
-
-      // The lines below are required to let ION know that you are prepared
-      // to receive data
-      ion.flushCachedData()
-      ion.startRetrieving = true
+    ion.on('data', function(obj) {
+      log(obj.data)
     })
   </script>
 </body>
