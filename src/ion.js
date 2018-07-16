@@ -59,17 +59,13 @@ class PeerHandler {
 
   handleClose() {
     this.log('Connection closed, destroying object...')
-    this.ion.peers[this.user].destroy()
-    delete this.ion.peers[this.user]
-    delete this.ion.tickets[this.user]
-
+    this.ion.closePeer(this.user)
     this.ion.emit('close', {
       user: this.user
     })
   }
 
   async handleSignal(data) {
-    this.log('handleSignal', JSON.stringify(data));
     await this.ion.broadcastSecureJson({
       cmd: 'neg',
       user: this.user,
@@ -91,10 +87,8 @@ class ION extends EventEmitter {
     this.bundlesScanned = {}
     this.serialTxCache = []
     this.connected = false
-    this.checkCurrentAddressTimer = null,
     this.peers = {}
     this.tickets = {}
-    this.waitingForTicket = true
     this.genesisTimestamp = Math.round(+new Date() / 1000)
     this.iceServers = [{
       urls: 'stun:stun.xs4all.nl:3478'
@@ -148,6 +142,12 @@ class ION extends EventEmitter {
     return CryptoJS.AES.decrypt(msg, this.encryptionKey).toString(CryptoJS.enc.Utf8)
   }
 
+  closePeer(user) {
+    this.peers[user].destroy()
+    delete this.peers[user]
+    delete this.tickets[user]
+  }
+
   startPeer(options) {
     const initiator = options.initiator
     console.log(`startPeer as ${options.user}. Initiator is ${options.initiator}...`);
@@ -165,6 +165,18 @@ class ION extends EventEmitter {
     p.on('signal', handler.handleSignal.bind(handler))
     p.on('error', handler.handleError.bind(handler))
     p.on('close', handler.handleClose.bind(handler))
+
+    if(!initiator) {
+      // We send out a dummy negotiation command to trigger the other party
+      // This is because non-initiator peers will not cast any signals by themselves
+      // thus not notifying the other party
+      this.broadcastSecureJson({
+        cmd: 'neg',
+        dummy: true,
+        user: options.user
+      }).then()
+    }
+
     this.peers[options.user] = p
   }
 
@@ -222,6 +234,13 @@ class ION extends EventEmitter {
     return trytes
   }
 
+  isInitiator(otherTag) {
+    var tags = [otherTag, this.myTag]
+    tags.sort()
+
+    return tags[0] === this.myTag
+  }
+
   processBundle(bundle) {
     if (bundle[0].tag.indexOf(this.myTag) === 0) {
       return;
@@ -245,9 +264,11 @@ class ION extends EventEmitter {
       if (json.cmd === 'neg') {
         if(json.user === this.myTag) {
           if (!this.peers[bundle[0].tag]) {
-            this.startPeer({ user: bundle[0].tag, initiator: false })
+            this.startPeer({ user: bundle[0].tag, initiator: this.isInitiator(bundle[0].tag) })
           }
-          this.peers[bundle[0].tag].signal(json.data)
+          if(!json.dummy) {
+            this.peers[bundle[0].tag].signal(json.data)
+          }
         }
       } else if (json.cmd === "ticket") {
         this.tickets[json.tag] = json
@@ -262,7 +283,7 @@ class ION extends EventEmitter {
     Object.values(this.tickets)
       .filter(ticket => !_this.peers[ticket.tag] && ticket.tag !== _this.myTag)
       .forEach(ticket => {
-        _this.startPeer({ user: ticket.tag, initiator: true })
+        _this.startPeer({ user: ticket.tag, initiator: _this.isInitiator(ticket.tag) })
       })
   }
 
@@ -325,9 +346,7 @@ class ION extends EventEmitter {
     this.checkingAnswers = false
 
     for(var key of Object.keys(this.peers)) {
-      this.peers[key].destroy()
-      delete this.peers[key]
-      delete this.tickets[key]
+      this.closePeer(key)
     }
   }
 
