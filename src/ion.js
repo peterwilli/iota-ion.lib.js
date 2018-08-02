@@ -413,6 +413,6 @@ ION.utils = {
   tryteGen,
   tempKey
 }
-ION.version = "1.1.0"
+ION.version = "1.1.1"
 
 export default ION
