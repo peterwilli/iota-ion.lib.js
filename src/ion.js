@@ -1,5 +1,7 @@
 var Peer = require('simple-peer')
 var CryptoJS = require("crypto-js")
+var lzjs = require('lzjs')
+
 import tryteGen from './utils/tryteGen.js'
 import tempKey from './utils/temp-key'
 const nanoid = require('nanoid')
@@ -66,6 +68,7 @@ class PeerHandler {
   }
 
   async handleSignal(data) {
+    console.log('handleSignal', data);
     await this.ion.broadcastSecureJson({
       cmd: 'neg',
       user: this.user,
@@ -89,16 +92,20 @@ class ION extends EventEmitter {
     this.connected = false
     this.peers = {}
     this.tickets = {}
-    this.genesisTimestamp = Math.round(+new Date() / 1000)
+    this.genesisTimestamp = null
+    this.lastSearchValuesStr = null
+
     this.iceServers = [{
       urls: 'stun:stun.xs4all.nl:3478'
     }, {
-      urls: 'stun:stun1.l.google.com:19302'
-    }, {
       urls: 'stun:stun2.l.google.com:19302'
-    }, {
-      urls: 'stun:stun.vodafone.ro:3478'
     }]
+  }
+
+  checkGenesis() {
+    if(!this.genesisTimestamp) {
+      this.genesisTimestamp = Math.round(+new Date() / 1000)
+    }
   }
 
   ephemeralAddr(offset = 0) {
@@ -153,7 +160,7 @@ class ION extends EventEmitter {
     console.log(`startPeer as ${options.user}. Initiator is ${options.initiator}...`);
     var p = new Peer({
       initiator,
-      trickle: true,
+      trickle: false,
       config: {
         iceServers: this.iceServers
       }
@@ -182,34 +189,35 @@ class ION extends EventEmitter {
 
   async waitForBundles() {
     var _this = this
-    return new Promise(function(resolve, reject) {
-      var fn = async () => {
-        var searchValues = {
-          addresses: [_this.ephemeralAddr(1), _this.ephemeralAddr()]
-        }
+    return new Promise(async function(resolve, reject) {
+      var searchValues = {
+        addresses: [_this.ephemeralAddr(1), _this.ephemeralAddr()]
+      }
+      var searchValuesStr = searchValues.addresses.join(" ")
+      if(searchValuesStr !== _this.lastSearchValuesStr) {
         console.log('searchValues', searchValues.addresses.join(" "));
-        var txs = await _this.findTransactionObjects(searchValues)
-        var bundles = []
-        for (var tx of txs) {
-          if (tx.currentIndex === 0) {
-            if(!_this.bundlesScanned[tx.bundle]) {
-              var bundle = await _this.getBundle(tx.hash)
-              if (bundle != null) {
-                bundles.push(bundle)
-                _this.bundlesScanned[tx.bundle] = true
-              }
+        _this.lastSearchValuesStr = searchValuesStr
+      }
+      var txs = await _this.findTransactionObjects(searchValues)
+      var bundles = []
+      for (var tx of txs) {
+        if (tx.currentIndex === 0) {
+          if(!_this.bundlesScanned[tx.bundle]) {
+            var bundle = await _this.getBundle(tx.hash)
+            if (bundle != null) {
+              bundles.push(bundle)
+              _this.bundlesScanned[tx.bundle] = true
             }
           }
         }
-        if (bundles.length > 0) {
-          bundles.sort((a, b) => {
-            return a[0].timestamp > b[0].timestamp
-          })
-          return resolve(bundles)
-        }
-        setTimeout(fn, 3000)
       }
-      setTimeout(fn, 3000)
+      if (bundles.length > 0) {
+        bundles.sort((a, b) => {
+          return a[0].timestamp > b[0].timestamp
+        })
+        return resolve(bundles)
+      }
+      return resolve([])
     })
   }
 
@@ -242,16 +250,20 @@ class ION extends EventEmitter {
   }
 
   processBundle(bundle) {
-    if (bundle[0].tag.indexOf(this.myTag) === 0) {
+    if (bundle[0].tag === this.myTag) {
+      console.log(`Ignoring this bundle because bundle tag(${bundle[0].tag}) == this.myTag(${this.myTag})`, bundle);
       return;
     }
     if(bundle[0].timestamp < this.genesisTimestamp) {
       // Anything before we arrived will be ignored.
+      console.log(`Ignoring this bundle because genesis timestamp(${this.genesisTimestamp}) < bundle[0].timestamp(${bundle[0].timestamp}):`, bundle);
       return;
     }
+    console.log(`processBundle[${ bundle[0].tag }]`);
     var iota = this.iota
     var jsonEncrypted = JSON.parse(iota.utils.extractJson(bundle))
     var jsonStr = this.decrypt(jsonEncrypted.enc)
+    jsonStr = lzjs.decompress(jsonStr)
     try {
       var jsons = JSON.parse(jsonStr)
     }
@@ -289,7 +301,9 @@ class ION extends EventEmitter {
 
   async flushSerialTxCache() {
     var jsonStr = JSON.stringify(this.serialTxCache)
-    var jsonEncrypted = this.encrypt(jsonStr)
+    var jsonCompressed = lzjs.compress(jsonStr)
+    var jsonEncrypted = this.encrypt(jsonCompressed)
+
     this.serialTxCache.length = 0
     var iota = this.iota
     var seed = tryteGen(this.prefix, nanoid(128))
@@ -343,7 +357,9 @@ class ION extends EventEmitter {
 
   stop() {
     this.addr = null
+    this.genesisTimestamp = null
     this.checkingAnswers = false
+    this.lastSearchValuesStr = null
 
     for(var key of Object.keys(this.peers)) {
       this.closePeer(key)
@@ -364,6 +380,7 @@ class ION extends EventEmitter {
   }
 
   async connect() {
+    this.checkGenesis()
     await this.broadcastMyTicket()
     var _this = this
     var checkAnswer = () => {
@@ -372,7 +389,7 @@ class ION extends EventEmitter {
           _this.processBundle(bundle)
         }
         if (_this.checkingAnswers) {
-          setTimeout(checkAnswer, 1000)
+          setTimeout(checkAnswer, bundles.length > 0 ? 1000 : 3000)
         }
       }).catch((e) => {
         console.error(`waitForBundles`, e);
@@ -391,8 +408,11 @@ ION.utils = {
   },
   randomTag() {
     return tryteGen("", nanoid(128), 27)
-  }
+  },
+  Peer,
+  tryteGen,
+  tempKey
 }
-ION.version = "1.0.9"
+ION.version = "1.1.0"
 
 export default ION
