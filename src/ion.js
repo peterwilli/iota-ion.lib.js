@@ -98,7 +98,11 @@ class ION extends EventEmitter {
     this.iceServers = [{
       urls: 'stun:stun.xs4all.nl:3478'
     }, {
+      urls: 'stun:stun1.l.google.com:19302'
+    }, {
       urls: 'stun:stun2.l.google.com:19302'
+    }, {
+      urls: 'stun:stun.vodafone.ro:3478'
     }]
   }
 
@@ -160,7 +164,7 @@ class ION extends EventEmitter {
     console.log(`startPeer as ${options.user}. Initiator is ${options.initiator}...`);
     var p = new Peer({
       initiator,
-      trickle: false,
+      trickle: true,
       config: {
         iceServers: this.iceServers
       }
@@ -386,12 +390,20 @@ class ION extends EventEmitter {
     var checkAnswer = () => {
       _this.waitForBundles().then(async (bundles) => {
         for (var bundle of bundles) {
-          _this.processBundle(bundle)
+          try {
+            _this.processBundle(bundle)
+          }
+          catch (e) {
+            console.error(`processBundle error (ignored)`, e);
+          }
         }
         if (_this.checkingAnswers) {
           setTimeout(checkAnswer, bundles.length > 0 ? 1000 : 3000)
         }
       }).catch((e) => {
+        if (_this.checkingAnswers) {
+          setTimeout(checkAnswer, bundles.length > 0 ? 1000 : 3000)
+        }
         console.error(`waitForBundles`, e);
       })
     }
