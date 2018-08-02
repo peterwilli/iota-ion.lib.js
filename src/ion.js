@@ -19,6 +19,11 @@ class PeerHandler {
     console.log(`[PeerHandler::${this.user}]`, ...args)
   }
 
+  handleOnSendChannelStateChange() {
+    const readyState = this.ion.peers[this.user].sendChannel.readyState;
+    this.log(`Send-channel state is: ${readyState}`);
+  }
+
   flushCachedData() {
     if (this.dataCache.length > 0) {
       for (var data of this.dataCache) {
@@ -38,6 +43,33 @@ class PeerHandler {
     });
     this.flushCachedData()
     this.startRetrieving = true
+  }
+
+  onReceiveChannelStateChange() {
+    const readyState = receiveChannel.readyState;
+    this.log(`Receive channel state is: ${readyState}`);
+  }
+
+  onReceiveMessageCallback(event) {
+    this.log(event.data);
+  }
+
+  handleOnDataChannel(event) {
+    console.log('handleOnDataChannel');
+    var receiveChannel = event.channel;
+    receiveChannel.onmessage = this.onReceiveMessageCallback;
+    receiveChannel.onopen = this.onReceiveChannelStateChange;
+    receiveChannel.onclose = this.onReceiveChannelStateChange;
+    this.receiveChannel = receiveChannel
+  }
+
+  handleOnCreateOfferSuccess(offer) {
+    this.ion.peers[this.user].setLocalDescription(offer)
+    this.ion.broadcastSecureJson({
+      cmd: 'neg',
+      user: this.user,
+      data: offer
+    }).then()
   }
 
   handleData(data) {
@@ -67,8 +99,20 @@ class PeerHandler {
     })
   }
 
+  handleIceCandidate(desc) {
+    this.ion.broadcastSecureJson({
+      cmd: 'ice',
+      user: this.user,
+      data: event.candidate
+    }).then()
+  }
+
+  handleOnIceStateChange(state) {
+    this.log('ICE state change event: ', state);
+  }
+
   async handleSignal(data) {
-    console.log('handleSignal', data);
+    this.log('handleSignal', data);
     await this.ion.broadcastSecureJson({
       cmd: 'neg',
       user: this.user,
@@ -162,20 +206,32 @@ class ION extends EventEmitter {
   startPeer(options) {
     const initiator = options.initiator
     console.log(`startPeer as ${options.user}. Initiator is ${options.initiator}...`);
-    var p = new Peer({
-      initiator,
-      trickle: true,
-      config: {
-        iceServers: this.iceServers
-      }
+    var p = new RTCPeerConnection({
+      iceServers: this.iceServers
     })
-
     var handler = new PeerHandler(this, options.user)
-    p.on('connect', handler.handleConnect.bind(handler))
-    p.on('data', handler.handleData.bind(handler))
-    p.on('signal', handler.handleSignal.bind(handler))
-    p.on('error', handler.handleError.bind(handler))
-    p.on('close', handler.handleClose.bind(handler))
+    var channel = p.createDataChannel("", {negotiated: true, id: 0})
+    p.handler = handler
+    p.initiator = initiator
+    p.send = (msg) => {
+      console.log('channel', channel.readyState);
+      channel.send(msg)
+    }
+    channel.onmessage = (m) => {
+      alert(m)
+    }
+    p.onicecandidate = handler.handleIceCandidate.bind(handler)
+    p.onopen = handler.handleConnect.bind(handler)
+    p.onclose = handler.handleClose.bind(handler)
+    p.ondatachannel = handler.handleOnDataChannel.bind(handler)
+
+    // p.oniceconnectionstatechange = handler.handleOnIceStateChange.bind(handler)
+
+    // p.on('connect', handler.handleConnect.bind(handler))
+    // p.on('data', handler.handleData.bind(handler))
+    // p.on('signal', handler.handleSignal.bind(handler))
+    // p.on('error', handler.handleError.bind(handler))
+    // p.on('close', handler.handleClose.bind(handler))
 
     if(!initiator) {
       // We send out a dummy negotiation command to trigger the other party
@@ -186,6 +242,11 @@ class ION extends EventEmitter {
         dummy: true,
         user: options.user
       }).then()
+    }
+    else {
+      p.createOffer().then(handler.handleOnCreateOfferSuccess.bind(handler), () => {
+
+      });
     }
 
     this.peers[options.user] = p
@@ -207,7 +268,13 @@ class ION extends EventEmitter {
       for (var tx of txs) {
         if (tx.currentIndex === 0) {
           if(!_this.bundlesScanned[tx.bundle]) {
-            var bundle = await _this.getBundle(tx.hash)
+            var bundle = null
+            try {
+              bundle = await _this.getBundle(tx.hash)
+            }
+            catch (e) {
+              console.error(`getBundle error (ignored)`, e);
+            }
             if (bundle != null) {
               bundles.push(bundle)
               _this.bundlesScanned[tx.bundle] = true
@@ -276,14 +343,31 @@ class ION extends EventEmitter {
     }
     for (var json of jsons) {
       jsonStr = JSON.stringify(json)
-      console.log(`processBundle[${ bundle[0].tag }] > msg`, json);
+      console.log(`processBundle[${ bundle[0].tag }] > msg`, JSON.stringify(json));
+      if(json.cmd === 'ice') {
+        if(json.user === this.myTag) {
+          const p = this.peers[bundle[0].tag]
+          p.addIceCandidate(json.candidate).then(() => {
+            console.log(bundle[0].tag, 'addIceCandidate success');
+          }, (e) => {
+            console.log(bundle[0].tag, 'addIceCandidate error', e);
+          })
+        }
+      }
       if (json.cmd === 'neg') {
         if(json.user === this.myTag) {
           if (!this.peers[bundle[0].tag]) {
             this.startPeer({ user: bundle[0].tag, initiator: this.isInitiator(bundle[0].tag) })
           }
           if(!json.dummy) {
-            this.peers[bundle[0].tag].signal(json.data)
+            const p = this.peers[bundle[0].tag]
+            console.log('setRemoteDescription', JSON.stringify(json.data));
+            p.setRemoteDescription(json.data)
+            if(!p.initiator) {
+              p.createAnswer().then(p.handler.handleOnCreateOfferSuccess.bind(p.handler), (e) => {
+                console.error('createAnswer failed', e);
+              })
+            }
           }
         }
       } else if (json.cmd === "ticket") {
